@@ -84,24 +84,24 @@ static struct   platform_device     odroidxu_ioboard_adc = {
 
 static struct s3c64xx_spi_csinfo spi1_csi[] = {
 	[0] = {
+		.fb_delay = 0x2,
 		.line       = EXYNOS5410_GPA2(5),
 		.set_level  = gpio_set_value,
 	},
 };
 static struct spi_board_info spi1_board_info[] __initdata = {
 	{
-		.modalias			= "ioboard-spi",
-		.platform_data		= NULL,
-		.max_speed_hz		= 20 * 1000 * 1000,     // 20 Mhz
+		.modalias			= "spidev",
+		.max_speed_hz		= 40 * 1000 * 1000,     // 20 Mhz
 		.bus_num			= 1,
 		.chip_select		= 0,
-		.mode				= SPI_MODE_0,
+		.mode				= SPI_MODE_3,
 		.controller_data    = &spi1_csi[0],
 	}
 };
 
 static struct platform_device odroidxu_ioboard_spi = {
-	.name			= "ioboard-spi",
+	.name			= "spidev",
 	.id 			= -1,
 };
 
