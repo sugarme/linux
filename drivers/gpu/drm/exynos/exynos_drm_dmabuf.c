@@ -166,7 +166,7 @@ static void exynos_gem_dmabuf_kunmap(struct dma_buf *dma_buf,
 static int exynos_gem_dmabuf_mmap(struct dma_buf *dma_buf,
 	struct vm_area_struct *vma)
 {
-	struct exynos_drm_gem_obj *exynos_gem_obj = dma_buf_to_obj(dma_buf);
+	struct exynos_drm_gem_obj *exynos_gem_obj = dma_buf->priv;
 	struct exynos_drm_gem_buf *buffer = exynos_gem_obj->buffer;
 	struct drm_gem_object *obj = &exynos_gem_obj->base;
 	struct drm_device *drm_dev = obj->dev;

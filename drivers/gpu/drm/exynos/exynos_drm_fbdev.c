@@ -17,6 +17,7 @@
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/exynos_drm.h>
+
 #include <linux/dma-buf.h>
 
 #include "exynos_drm_drv.h"
@@ -25,10 +26,7 @@
 #include "exynos_drm_gem.h"
 #include "exynos_drm_iommu.h"
 
-#define IOCTL_GET_FB_DMA_BUF _IOWR('m',0xF9, __u32 )
-#define FBIOGET_DMABUF       _IOR('F', 0x21, struct fb_dmabuf_export)
-
-#define NUM_BUFFERS 1
+#define NUM_BUFFERS 3
 
 #define MAX_CONNECTOR		4
 #define PREFERRED_BPP		32
@@ -68,74 +66,52 @@ static int exynos_drm_fb_mmap(struct fb_info *info,
 	return 0;
 }
 
-static u32 exynos_fb_get_dma_buf( struct fb_info *info)
+#if IS_ENABLED(CONFIG_DRM_EXYNOS_EXPERIMENTAL_VSYNC)
+static int exynos_drm_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
 {
-    int fd = -1;
-    struct drm_fb_helper *helper = info->par;
-    struct drm_device *dev = helper->dev;
-    struct exynos_drm_fbdev *exynos_fbd = to_exynos_fbdev(helper);
-    struct exynos_drm_gem_obj *exynos_gem_obj = exynos_fbd->exynos_gem_obj;
+	extern struct exynos_drm_manager mixer_manager;
+	int ret = drm_fb_helper_pan_display(var, info);
 
-    if( dev->driver->gem_prime_export )
-    {
-        struct dma_buf *buf = NULL;
-        buf = dev->driver->gem_prime_export( dev, &exynos_gem_obj->base, O_RDWR);
-        if(buf)
-            fd = dma_buf_fd(buf, O_RDWR);
-    }
+	mixer_manager.ops->wait_for_vblank(&mixer_manager);
 
-    return fd;
+	return ret;
 }
+#endif
 
-static int fb_ioctl(struct fb_info *info, unsigned int cmd,
-            unsigned long arg)
+static struct dma_buf *exynos_fb_get_dma_buf(struct fb_info *info)
 {
-    int ret;
+	struct dma_buf *buf = NULL;
+	struct drm_fb_helper *helper = info->par;
+	struct drm_device *dev = helper->dev;
+	struct exynos_drm_fbdev *exynos_fbd = to_exynos_fbdev(helper);
+	struct exynos_drm_gem_obj *exynos_gem_obj = exynos_fbd->exynos_gem_obj;
 
-    switch (cmd) {
-      case FBIOGET_DMABUF:
-      {
-              struct fb_dmabuf_export __user *out_ptr = (struct fb_dmabuf_export *)arg;
-              u32 buf_fd = exynos_fb_get_dma_buf(info);
-              if(buf_fd == -1)
-              {
-                      ret = -ENOMEM;
-                      break;
-              }
-               ret = put_user(buf_fd, &out_ptr->fd);
-               break;
-       }		
-    case IOCTL_GET_FB_DMA_BUF:
-    {
-        u32 __user *out_ptr = (u32 __user *)arg;
-        u32 buf_fd = exynos_fb_get_dma_buf(info);
-        if(buf_fd == -1)
-        {
-           ret = -ENOMEM;
-            break;
-        }
-        ret = put_user(buf_fd, out_ptr);
-        break;
-    }
-    default:
-        ret = -ENOTTY;
-    }
+	if( dev->driver->gem_prime_export ) {
+		buf = dev->driver->gem_prime_export( dev, &exynos_gem_obj->base, O_RDWR);
+		if(buf) {
+			drm_gem_object_reference(&exynos_gem_obj->base);
+		}
+	}
 
-    return ret;
+	return buf;
 }
 
 static struct fb_ops exynos_drm_fb_ops = {
-	.owner		= THIS_MODULE,
-	.fb_mmap        = exynos_drm_fb_mmap,
-	.fb_fillrect	= cfb_fillrect,
-	.fb_copyarea	= cfb_copyarea,
-	.fb_imageblit	= cfb_imageblit,
-	.fb_check_var	= drm_fb_helper_check_var,
-	.fb_set_par	= drm_fb_helper_set_par,
-	.fb_blank	= drm_fb_helper_blank,
-	.fb_pan_display	= drm_fb_helper_pan_display,
-	.fb_setcmap	= drm_fb_helper_setcmap,
-	.fb_ioctl = fb_ioctl,
+	.owner			= THIS_MODULE,
+	.fb_mmap		= exynos_drm_fb_mmap,
+	.fb_fillrect		= cfb_fillrect,
+	.fb_copyarea		= cfb_copyarea,
+	.fb_imageblit		= cfb_imageblit,
+	.fb_check_var		= drm_fb_helper_check_var,
+	.fb_set_par		= drm_fb_helper_set_par,
+	.fb_blank		= drm_fb_helper_blank,
+#if IS_ENABLED(CONFIG_DRM_EXYNOS_EXPERIMENTAL_VSYNC)
+	.fb_pan_display		= exynos_drm_pan_display,
+#else
+	.fb_pan_display		= drm_fb_helper_pan_display,
+#endif
+	.fb_setcmap		= drm_fb_helper_setcmap,
+	.fb_dmabuf_export	= exynos_fb_get_dma_buf,
 };
 
 static int exynos_drm_fbdev_update(struct drm_fb_helper *helper,
@@ -144,11 +120,11 @@ static int exynos_drm_fbdev_update(struct drm_fb_helper *helper,
 	struct fb_info *fbi = helper->fbdev;
 	struct drm_device *dev = helper->dev;
 	struct exynos_drm_gem_buf *buffer;
-	unsigned int size = fb->width * fb->height * (fb->bits_per_pixel >> 3) * NUM_BUFFERS;
+	unsigned int size = fb->width * fb->height * (fb->bits_per_pixel >> 3);
 	unsigned long offset;
 
 	drm_fb_helper_fill_fix(fbi, fb->pitches[0], fb->depth);
-	drm_fb_helper_fill_var(fbi, helper, fb->width, fb->height / NUM_BUFFERS); 
+	drm_fb_helper_fill_var(fbi, helper, fb->width, fb->height / NUM_BUFFERS);
 
 	/* RGB formats use only one buffer */
 	buffer = exynos_drm_fb_buffer(fb, 0);
